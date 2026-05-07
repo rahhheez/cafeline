@@ -14,6 +14,26 @@ This repo is ready for a Render Blueprint deploy with:
 4. Set `VITE_ORDER_EMAIL_TO` when Render asks for synced env vars.
 5. Deploy.
 
+## If You Deploy Backend Manually
+
+Use these settings for the Django API service:
+
+```text
+Root Directory: backend
+Build Command: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate
+Start Command: gunicorn backend.wsgi:application
+```
+
+If you leave Root Directory empty, use these root-level commands instead:
+
+```text
+Build Command: bash build.sh
+Start Command: cd backend && gunicorn backend.wsgi:application
+```
+
+The root `requirements.txt`, `build.sh`, and `Procfile` are included only to
+support that manual root-directory deploy style.
+
 ## Important
 
 The frontend env var `VITE_API_URL` is currently set to:
