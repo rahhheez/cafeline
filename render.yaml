@@ -31,7 +31,7 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        value: https://cafaline-api.onrender.com/api/
+        value: https://cafeline.onrender.com/api/
       - key: VITE_EMAILJS_SERVICE_ID
         value: service_64zdc78
       - key: VITE_EMAILJS_PUBLIC_KEY
