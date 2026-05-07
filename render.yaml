@@ -5,7 +5,7 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
     preDeployCommand: python manage.py migrate
-    startCommand: gunicorn backend.wsgi:application
+    startCommand: gunicorn --chdir backend backend.wsgi:application
     healthCheckPath: /api/menu/
     envVars:
       - key: PYTHON_VERSION
