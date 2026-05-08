@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import API from "../services/api";
 
@@ -17,8 +17,10 @@ export default function Menu() {
   const [cart, setCart] = useState(readSavedCart);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [cartToast, setCartToast] = useState(null);
   const [activeCategory, setActiveCategory] = useState("All");
+  const [isCartOpen, setIsCartOpen] = useState(() => new URLSearchParams(window.location.search).get("cart") === "1");
+  const cartPanelRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -42,10 +44,30 @@ export default function Menu() {
 
   useEffect(() => {
     localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+    window.dispatchEvent(new CustomEvent("cafaline:cart-updated"));
   }, [cart]);
 
+  useEffect(() => {
+    const openCart = () => setIsCartOpen(true);
+    window.addEventListener("cafaline:open-cart", openCart);
+
+    return () => window.removeEventListener("cafaline:open-cart", openCart);
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("cart-drawer-active", isCartOpen);
+    return () => document.body.classList.remove("cart-drawer-active");
+  }, [isCartOpen]);
+
+  useEffect(() => {
+    if (!cartToast) return undefined;
+
+    const timer = window.setTimeout(() => setCartToast(null), 3600);
+    return () => window.clearTimeout(timer);
+  }, [cartToast]);
+
   const changeQuantity = (item, amount) => {
-    setNotice("");
+    setCartToast(null);
     setError("");
 
     if (item.is_coming_soon && amount > 0) {
@@ -70,10 +92,17 @@ export default function Menu() {
 
       return next;
     });
+
+    if (amount > 0) {
+      setCartToast({
+        title: `${item.name} added to cart`,
+        text: `${(cart[item.id] || 0) + 1} selected. Tap to review your cart.`,
+      });
+    }
   };
 
   const removeFromCart = (item) => {
-    setNotice("");
+    setCartToast(null);
     setError("");
     setCart(current => {
       const next = { ...current };
@@ -93,7 +122,7 @@ export default function Menu() {
 
   const goToCheckout = () => {
     setError("");
-    setNotice("");
+    setCartToast(null);
 
     if (!cartItems.length) {
       setError("Add at least one item before placing an order.");
@@ -110,8 +139,24 @@ export default function Menu() {
     navigate("/checkout");
   };
 
+  const showCart = () => {
+    setCartToast(null);
+    setIsCartOpen(true);
+    cartPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <main className="workspace menu-workspace">
+      {cartToast && (
+        <button className="cart-toast" type="button" onClick={showCart} aria-label="View cart">
+          <span className="cart-toast-mark">OK</span>
+          <span>
+            <strong>{cartToast.title}</strong>
+            <small>{cartToast.text}</small>
+          </span>
+        </button>
+      )}
+
       <section className="cafe-hero">
         <div>
           <p className="eyebrow">Cafaline Reserve</p>
@@ -212,10 +257,17 @@ export default function Menu() {
           </div>
         </div>
 
-        <aside className="cart-panel">
+        <button className={isCartOpen ? "cart-backdrop open" : "cart-backdrop"} type="button" onClick={() => setIsCartOpen(false)} aria-label="Close cart" />
+
+        <aside className={isCartOpen ? "cart-panel cart-panel-open" : "cart-panel"} ref={cartPanelRef} id="current-cart">
           <div className="section-title-row">
             <h2>Current cart</h2>
-            <span className="status-chip">{itemCount} items</span>
+            <div className="cart-heading-actions">
+              <span className="status-chip">{itemCount} items</span>
+              <button className="ghost-button compact cart-close-button" type="button" onClick={() => setIsCartOpen(false)}>
+                Close
+              </button>
+            </div>
           </div>
 
           <div className="cart-list">
@@ -246,8 +298,6 @@ export default function Menu() {
             <span>Total</span>
             <strong>Rs {total.toFixed(0)}</strong>
           </div>
-
-          {notice && <p className="form-success">{notice}</p>}
 
           <button className="primary-button" type="button" onClick={goToCheckout}>
             Continue to payment

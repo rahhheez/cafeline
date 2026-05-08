@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -8,6 +9,15 @@ import Contact from "./pages/Contact";
 import AdminLogin from "./pages/AdminLogin";
 import AdminPanel from "./pages/AdminPanel";
 import "./App.css";
+
+const readCartCount = () => {
+  try {
+    const savedCart = JSON.parse(localStorage.getItem("cart") || "{}");
+    return Object.values(savedCart).reduce((sum, quantity) => sum + Number(quantity || 0), 0);
+  } catch {
+    return 0;
+  }
+};
 
 function ProtectedRoute({ children }) {
   return localStorage.getItem("token") ? children : <Navigate to="/" replace />;
@@ -31,6 +41,21 @@ function AppShell({ children }) {
   const location = useLocation();
   const username = localStorage.getItem("username") || "Staff";
   const isAdmin = localStorage.getItem("isAdmin") === "true";
+  const [cartCount, setCartCount] = useState(readCartCount);
+
+  const updateCartCount = () => {
+    setCartCount(readCartCount());
+  };
+
+  useEffect(() => {
+    window.addEventListener("storage", updateCartCount);
+    window.addEventListener("cafaline:cart-updated", updateCartCount);
+
+    return () => {
+      window.removeEventListener("storage", updateCartCount);
+      window.removeEventListener("cafaline:cart-updated", updateCartCount);
+    };
+  }, []);
 
   const logout = () => {
     localStorage.removeItem("token");
@@ -40,6 +65,15 @@ function AppShell({ children }) {
     localStorage.removeItem("cart");
     localStorage.removeItem("checkoutCart");
     navigate("/");
+  };
+
+  const openCart = () => {
+    if (location.pathname === "/menu") {
+      window.dispatchEvent(new CustomEvent("cafaline:open-cart"));
+      return;
+    }
+
+    navigate("/menu?cart=1");
   };
 
   if (location.pathname === "/" || location.pathname === "/signup" || location.pathname === "/admin-login") {
@@ -57,9 +91,11 @@ function AppShell({ children }) {
           <Link className={location.pathname === "/menu" ? "active" : ""} to="/menu">
             Menu
           </Link>
-          <Link className={location.pathname === "/contact" ? "active" : ""} to="/contact">
-            Contact
-          </Link>
+          {!isAdmin && (
+            <Link className={location.pathname === "/contact" ? "active" : ""} to="/contact">
+              Contact
+            </Link>
+          )}
           {!isAdmin && (
             <Link className={location.pathname === "/dashboard" ? "active" : ""} to="/dashboard">
               Dashboard
@@ -72,6 +108,12 @@ function AppShell({ children }) {
           )}
         </nav>
         <div className="user-actions">
+          {!isAdmin && (
+            <button className="cart-nav-button" type="button" onClick={openCart} aria-label={`Open cart with ${cartCount} items`}>
+              <span>Cart</span>
+              <strong>{cartCount}</strong>
+            </button>
+          )}
           <span className="user-pill">{username}</span>
           <button className="icon-button" type="button" onClick={logout} title="Logout" aria-label="Logout">
             Out
@@ -93,7 +135,7 @@ function AppShell({ children }) {
             <span>Explore</span>
             <Link to="/menu">Menu</Link>
             {!isAdmin && <Link to="/dashboard">Dashboard</Link>}
-            <Link to="/contact">Contact</Link>
+            {!isAdmin && <Link to="/contact">Contact</Link>}
           </div>
           <div>
             <span>Service</span>
@@ -161,9 +203,9 @@ function App() {
           <Route
             path="/contact"
             element={
-              <ProtectedRoute>
+              <UserRoute>
                 <Contact />
-              </ProtectedRoute>
+              </UserRoute>
             }
           />
           <Route path="*" element={<Navigate to="/menu" replace />} />

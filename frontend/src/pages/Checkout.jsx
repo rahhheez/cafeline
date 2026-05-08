@@ -67,9 +67,13 @@ export default function Checkout() {
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [paymentError, setPaymentError] = useState("");
+  const [paymentNotice, setPaymentNotice] = useState("");
   const [successOrder, setSuccessOrder] = useState(null);
   const [selectedUpiApp, setSelectedUpiApp] = useState("");
   const [upiQrCode, setUpiQrCode] = useState("");
+  const [upiQrRequested, setUpiQrRequested] = useState(false);
+  const [upiQrLoading, setUpiQrLoading] = useState(false);
+  const [upiPaymentStep, setUpiPaymentStep] = useState("idle");
   const [upiReference] = useState(() => `CAFALINE${Date.now()}`);
   const navigate = useNavigate();
 
@@ -97,33 +101,37 @@ export default function Checkout() {
   };
 
   useEffect(() => {
-    let active = true;
+    if (upiPaymentStep !== "opened") return undefined;
 
-    QRCode.toDataURL(genericUpiLink, {
-      width: 360,
-      margin: 1,
-      color: {
-        dark: "#003f2a",
-        light: "#ffffff",
-      },
-    })
-      .then(url => {
-        if (active) setUpiQrCode(url);
-      })
-      .catch(() => {
-        if (active) setUpiQrCode("");
-      });
+    const markReturned = () => {
+      if (!document.hidden) setUpiPaymentStep("returned");
+    };
+
+    document.addEventListener("visibilitychange", markReturned);
+    window.addEventListener("focus", markReturned);
 
     return () => {
-      active = false;
+      document.removeEventListener("visibilitychange", markReturned);
+      window.removeEventListener("focus", markReturned);
     };
+  }, [upiPaymentStep]);
+
+  useEffect(() => {
+    setUpiQrCode("");
+    setUpiQrRequested(false);
   }, [genericUpiLink]);
 
   const setField = (field, value) => {
-    setForm(current => ({ ...current, [field]: value }));
+    setForm(current => ({
+      ...current,
+      [field]: value,
+      ...(field === "payment_reference" ? { payment_status: "pending" } : {}),
+    }));
     setFieldErrors(current => ({ ...current, [field]: "" }));
     setError("");
-    if (field === "payment_reference") setPaymentError("");
+    if (field === "payment_reference") {
+      setPaymentError("");
+    }
   };
 
   const setPaymentMethod = (method) => {
@@ -136,47 +144,87 @@ export default function Checkout() {
     }));
     setError("");
     setPaymentError("");
-    if (method !== "upi") setSelectedUpiApp("");
+    setPaymentNotice("");
+    if (method !== "upi") {
+      setSelectedUpiApp("");
+      setUpiPaymentStep("idle");
+      setUpiQrRequested(false);
+      setUpiQrCode("");
+    }
   };
 
   const selectedUpiAppLabel = UPI_APPS.find(app => app.id === selectedUpiApp)?.label || "";
 
-  const openUpiApp = (app) => {
+  const selectUpiApp = (app) => {
     setSelectedUpiApp(app.id);
     setForm(current => ({
       ...current,
       payment_provider: app.label,
       payment_status: "pending",
+      payment_reference: "",
     }));
+    setUpiPaymentStep("idle");
     setError("");
     setPaymentError("");
-
-    if (!cartItems.length || total <= 0) {
-      setPaymentError("Your cart is empty. Add menu items before opening a UPI app.");
-      return;
-    }
-
-    window.location.href = getUpiAppLink(app);
+    setPaymentNotice("");
   };
 
-  const confirmPayment = () => {
-    setPaymentError("");
+  const openUpiApp = () => {
+    const app = UPI_APPS.find(option => option.id === selectedUpiApp);
 
-    if (!form.payment_reference.trim()) {
-      setPaymentError("Enter the UPI transaction ID or payment reference after successful payment.");
+    if (!app) {
+      setPaymentNotice("");
+      setPaymentError("Select Google Pay, PhonePe, Paytm, BHIM, or Any UPI app first.");
+      return false;
+    }
+
+    if (!cartItems.length || total <= 0) {
+      setPaymentNotice("");
+      setPaymentError("Your cart is empty. Add menu items before opening a UPI app.");
+      return false;
+    }
+
+    setUpiPaymentStep("opened");
+    setPaymentNotice(`Opening ${app.label}. Complete the payment there, then come back and enter the transaction ID.`);
+    window.location.assign(getUpiAppLink(app));
+    return true;
+  };
+
+  const generateUpiQrCode = async () => {
+    setPaymentError("");
+    setPaymentNotice("");
+    setUpiQrRequested(true);
+
+    if (!cartItems.length || total <= 0) {
+      setPaymentError("Your cart is empty. Add menu items before generating a UPI QR code.");
       return;
     }
 
-    setForm(current => ({
-      ...current,
-      payment_status: "paid",
-      payment_provider: current.payment_provider || selectedUpiAppLabel || "UPI",
-    }));
+    setUpiQrLoading(true);
+    try {
+      const url = await QRCode.toDataURL(genericUpiLink, {
+        width: 360,
+        margin: 1,
+        color: {
+          dark: "#003f2a",
+          light: "#ffffff",
+        },
+      });
+      setUpiQrCode(url);
+      setUpiPaymentStep("returned");
+      setPaymentNotice("QR code is ready. Pay the exact amount, then enter the UPI transaction ID.");
+    } catch {
+      setPaymentError("Could not generate the QR code. Try a UPI app button instead.");
+      setUpiQrCode("");
+    } finally {
+      setUpiQrLoading(false);
+    }
   };
 
   const openGatewayPayment = (method, provider = "") => {
     setError("");
     setPaymentError("");
+    setPaymentNotice("");
 
     if (!PAYMENT_GATEWAY_URL) {
       setPaymentError("Payment gateway is not connected yet. Add a real gateway checkout URL and success callback before creating paid orders.");
@@ -189,13 +237,14 @@ export default function Checkout() {
     gatewayUrl.searchParams.set("amount", total.toFixed(2));
     gatewayUrl.searchParams.set("currency", "INR");
     gatewayUrl.searchParams.set("return_url", window.location.href);
-    window.location.href = gatewayUrl.toString();
+    window.location.assign(gatewayUrl.toString());
   };
 
   const placeOrder = async (event) => {
     event.preventDefault();
     setError("");
     setPaymentError("");
+    setPaymentNotice("");
 
     const nextErrors = validateCheckoutForm(form);
     setFieldErrors(nextErrors);
@@ -206,36 +255,44 @@ export default function Checkout() {
       return;
     }
 
-    if (["upi", "card", "wallet"].includes(form.payment_method) && form.payment_status !== "paid") {
-      setPaymentError("Open or scan UPI, complete the payment, then enter the transaction ID and confirm payment.");
-      return;
-    }
+    if (form.payment_method === "upi") {
+      if (upiPaymentStep === "idle" && !upiQrCode) {
+        openUpiApp();
+        return;
+      }
 
-    if (!form.payment_reference.trim()) {
-      setPaymentError("Payment reference or UPI transaction ID is required before placing the order.");
+      if (!form.payment_reference.trim()) {
+        setPaymentError("After successful UPI payment, enter the transaction ID from your UPI app before the order is placed.");
+        return;
+      }
+    } else if (["card", "wallet"].includes(form.payment_method) && form.payment_status !== "paid") {
+      setPaymentError("Complete the payment gateway payment first. The order is created only after successful payment.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const order = await API.post("order/", {
+      const paidForm = {
         ...form,
         payment_provider: form.payment_provider || selectedUpiAppLabel || "UPI",
         payment_reference: form.payment_reference.trim(),
         payment_status: "paid",
+      };
+      const order = await API.post("order/", {
+        ...paidForm,
         items: cartItems.map(item => ({ item: item.id, quantity: item.quantity })),
       });
       try {
         await sendOrderEmail({
           order: order.data,
-          form,
+          form: paidForm,
           cartItems,
           total,
           paymentDetails: {
-            provider: form.payment_provider || selectedUpiAppLabel || "UPI",
+            provider: paidForm.payment_provider,
             status: "paid",
-            reference: form.payment_reference.trim(),
+            reference: paidForm.payment_reference,
             upiId: UPI_ID,
             upiName: UPI_NAME,
           },
@@ -346,39 +403,46 @@ export default function Checkout() {
             <div className="payment-detail-panel">
               {form.payment_method === "upi" && (
                 <section className="upi-payment-panel" aria-label="UPI payment details">
-                  <div className="upi-qr-card">
-                    <img src={upiQrCode || "/upi-qr-clean.jpeg"} alt={`UPI QR code for Rs ${total.toFixed(2)} payable to ${UPI_NAME}`} />
-                  </div>
                   <div className="upi-manual">
                     <span>Pay by UPI</span>
                     <h3>Choose a UPI app</h3>
-                    <p>Pay Rs {total.toFixed(2)} to {UPI_ID}. The QR code and app buttons include this exact payable amount.</p>
+                    <p>Select an app, then use the Place order button. The order is created only after you return and enter the successful UPI transaction ID.</p>
                     <div className="upi-app-grid" aria-label="Select UPI app">
                       {UPI_APPS.map(app => (
                         <button
                           className={selectedUpiApp === app.id ? "upi-app-button active" : "upi-app-button"}
                           key={app.id}
                           type="button"
-                          onClick={() => openUpiApp(app)}
+                          onClick={() => selectUpiApp(app)}
                         >
                           {app.label}
                         </button>
                       ))}
                     </div>
+                    <div className="upi-qr-option">
+                      <button className="secondary-button compact" type="button" onClick={generateUpiQrCode} disabled={upiQrLoading}>
+                        {upiQrLoading ? "Generating QR..." : upiQrCode ? "Refresh QR code" : "Generate UPI QR code"}
+                      </button>
+                      {upiQrRequested && upiQrCode && (
+                        <div className="upi-qr-card">
+                          <img src={upiQrCode} alt={`UPI QR code for Rs ${total.toFixed(2)} payable to ${UPI_NAME}`} />
+                        </div>
+                      )}
+                    </div>
                     <div className="payment-confirm-panel">
                       <label className={paymentError && !form.payment_reference.trim() ? "has-error" : ""}>
-                        UPI transaction ID
+                        Successful UPI transaction ID
                         <input
                           value={form.payment_reference}
                           onChange={e => setField("payment_reference", e.target.value)}
-                          placeholder="Enter UPI reference after success"
+                          placeholder="Example: 412345678901"
                         />
                       </label>
-                      <button className="secondary-button compact" type="button" onClick={confirmPayment}>
-                        {form.payment_status === "paid" ? "Payment confirmed" : "I completed payment"}
-                      </button>
-                      {form.payment_status === "paid" && (
-                        <p className="payment-confirmed">Payment confirmed. You can place the order now.</p>
+                      {upiPaymentStep === "opened" && (
+                        <p className="payment-confirmed">UPI app opened. Complete payment there, then return here.</p>
+                      )}
+                      {upiPaymentStep === "returned" && (
+                        <p className="payment-confirmed">Welcome back. Enter the transaction ID and press Place order.</p>
                       )}
                     </div>
                   </div>
@@ -429,10 +493,13 @@ export default function Checkout() {
           </section>
 
           {paymentError && <p className="field-error payment-field-error">{paymentError}</p>}
+          {paymentNotice && <p className="payment-notice">{paymentNotice}</p>}
           {error && <p className="form-error">{error}</p>}
 
           <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? "Placing order..." : `Place paid order - Rs ${total.toFixed(0)}`}
+            {loading ? "Placing order..." : form.payment_method === "upi" && upiPaymentStep === "idle" && !upiQrCode
+              ? `Pay with ${selectedUpiAppLabel || "UPI app"} - Rs ${total.toFixed(0)}`
+              : `Place paid order - Rs ${total.toFixed(0)}`}
           </button>
         </form>
 
